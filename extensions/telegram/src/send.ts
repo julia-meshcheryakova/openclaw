@@ -1147,21 +1147,44 @@ export async function sendMediaGroupTelegram(
 
   type InputMedia = InputMediaPhoto | InputMediaVideo | InputMediaDocument;
 
-  const media: InputMedia[] = mediaItems.map(({ file, kind }, index) => {
-    const baseItem = {
-      media: file,
-      ...(index === 0 && htmlCaption ? { caption: htmlCaption, parse_mode: "HTML" as const } : {}),
-    };
+  const isTelegramPhotoMetadataValid = (metadata: Awaited<ReturnType<typeof getImageMetadata>> | null | undefined) => {
+    const width = metadata?.width;
+    const height = metadata?.height;
 
-    if (kind === "video") {
-      return { type: "video", ...baseItem };
+    if (
+      typeof width !== "number" ||
+      typeof height !== "number" ||
+      !Number.isFinite(width) ||
+      !Number.isFinite(height) ||
+      width <= 0 ||
+      height <= 0
+    ) {
+      return true;
     }
-    if (kind === "image" && !opts.forceDocument) {
-      return { type: "photo", ...baseItem };
-    }
-    return { type: "document", ...baseItem };
-  });
 
+    const aspectRatio = Math.max(width, height) / Math.min(width, height);
+    return width + height <= 10_000 && aspectRatio <= 20;
+  };
+
+  const media: InputMedia[] = await Promise.all(
+    mediaItems.map(async ({ file, kind }, index) => {
+      const baseItem = {
+        media: file,
+        ...(index === 0 && htmlCaption ? { caption: htmlCaption, parse_mode: "HTML" as const } : {}),
+      };
+
+      if (kind === "video") {
+        return { type: "video", ...baseItem };
+      }
+      if (kind === "image" && !opts.forceDocument) {
+        const metadata = await getImageMetadata(file);
+        if (isTelegramPhotoMetadataValid(metadata)) {
+          return { type: "photo", ...baseItem };
+        }
+      }
+      return { type: "document", ...baseItem };
+    }),
+  );
   const mediaGroupParams = {
     ...threadParams,
     ...(opts.silent === true ? { disable_notification: true } : {}),
