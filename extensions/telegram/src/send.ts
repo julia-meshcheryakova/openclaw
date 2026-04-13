@@ -1098,15 +1098,10 @@ export async function sendMediaGroupTelegram(
     );
 
     const kind = kindFromMime(media.contentType ?? undefined);
-    const isGif = isGifMedia({
-      contentType: media.contentType,
-      fileName: media.fileName,
-    });
+    // GIF-specific handling (animation type, document fallback) is not yet
+    // implemented for media groups — GIFs are sent as photos for now.
 
-    const fileName =
-      media.fileName ??
-      (isGif ? `animation${index}.gif` : inferFilename(kind ?? "document")) ??
-      `file${index}`;
+    const fileName = media.fileName ?? inferFilename(kind ?? "document") ?? `file${index}`;
     const file = new InputFileCtor(media.buffer, fileName);
 
     mediaItems.push({ file, buffer: media.buffer, kind: kind ?? null });
@@ -1152,7 +1147,7 @@ export async function sendMediaGroupTelegram(
   type InputMedia = InputMediaPhoto | InputMediaVideo | InputMediaDocument;
 
   const isTelegramPhotoMetadataValid = (
-    metadata: Awaited<ReturnType<typeof getImageMetadata>> | null | undefined,
+    metadata: { width?: number; height?: number } | null | undefined,
   ) => {
     const width = metadata?.width;
     const height = metadata?.height;
