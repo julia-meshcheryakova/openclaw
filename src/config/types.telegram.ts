@@ -18,6 +18,8 @@ import type { GroupToolPolicyBySenderConfig, GroupToolPolicyConfig } from "./typ
 export type TelegramActionConfig = {
   reactions?: boolean;
   sendMessage?: boolean;
+  /** Enable sendMediaGroup (album) creation. Requires sendMessage to also be enabled. */
+  sendMediaGroup?: boolean;
   /** Enable poll creation. Requires sendMessage to also be enabled. */
   poll?: boolean;
   deleteMessage?: boolean;

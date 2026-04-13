@@ -37,6 +37,7 @@ import {
   sendMessageTelegram,
   sendPollTelegram,
   sendStickerTelegram,
+  sendMediaGroupTelegram,
 } from "./send.js";
 import { getCacheStats, searchStickers } from "./sticker-cache.js";
 import { resolveTelegramToken } from "./token.js";
@@ -52,6 +53,7 @@ export const telegramActionRuntime = {
   sendMessageTelegram,
   sendPollTelegram,
   sendStickerTelegram,
+  sendMediaGroupTelegram,
 };
 
 const TELEGRAM_BUTTON_STYLES: readonly TelegramButtonStyle[] = ["danger", "success", "primary"];
@@ -70,6 +72,7 @@ const TELEGRAM_ACTION_ALIASES = {
   searchSticker: "searchSticker",
   send: "sendMessage",
   sendMessage: "sendMessage",
+  sendMediaGroup: "sendMediaGroup",
   sendSticker: "sendSticker",
   sticker: "sendSticker",
   stickerCacheStats: "stickerCacheStats",
@@ -372,6 +375,79 @@ export async function handleTelegramAction(
     return jsonResult({
       ok: true,
       messageId: result.messageId,
+      chatId: result.chatId,
+    });
+  }
+
+  if (action === "sendMediaGroup") {
+    if (!isActionEnabled("sendMessage")) {
+      throw new Error("Telegram sendMessage is disabled.");
+    }
+    const to = readStringParam(params, "to", { required: true });
+    const filePaths = readStringArrayParam(params, "filePaths", { required: true });
+
+    if (!Array.isArray(filePaths) || filePaths.length === 0) {
+      throw new Error("filePaths array is required and must contain at least 1 item");
+    }
+    if (filePaths.length > 10) {
+      throw new Error("Telegram media groups support max 10 items");
+    }
+
+    const caption = readStringParam(params, "caption") ?? readStringParam(params, "message");
+    const buttons = resolveTelegramButtonsFromParams(params);
+
+    if (buttons) {
+      const inlineButtonsScope = resolveTelegramInlineButtonsScope({
+        cfg,
+        accountId: accountId ?? undefined,
+      });
+      if (inlineButtonsScope === "off") {
+        throw new Error(
+          'Telegram inline buttons are disabled. Set channels.telegram.capabilities.inlineButtons to "dm", "group", "all", or "allowlist".',
+        );
+      }
+      if (inlineButtonsScope === "dm" || inlineButtonsScope === "group") {
+        const targetType = resolveTelegramTargetChatType(to);
+        if (targetType === "unknown") {
+          throw new Error(
+            `Telegram inline buttons require a numeric chat id when inlineButtons="${inlineButtonsScope}".`,
+          );
+        }
+        if (inlineButtonsScope === "dm" && targetType !== "direct") {
+          throw new Error('Telegram inline buttons are limited to DMs when inlineButtons="dm".');
+        }
+        if (inlineButtonsScope === "group" && targetType !== "group") {
+          throw new Error(
+            'Telegram inline buttons are limited to groups when inlineButtons="group".',
+          );
+        }
+      }
+    }
+
+    const replyToMessageId = readTelegramReplyToMessageId(params);
+    const messageThreadId = readTelegramThreadId(params);
+    const token = resolveTelegramToken(cfg, { accountId }).token;
+    if (!token) {
+      throw new Error(
+        "Telegram bot token missing. Set TELEGRAM_BOT_TOKEN or channels.telegram.botToken.",
+      );
+    }
+
+    const result = await telegramActionRuntime.sendMediaGroupTelegram(to, filePaths, caption, {
+      cfg,
+      token,
+      accountId: accountId ?? undefined,
+      mediaLocalRoots: options?.mediaLocalRoots,
+      mediaReadFile: options?.mediaReadFile,
+      buttons,
+      replyToMessageId: replyToMessageId ?? undefined,
+      messageThreadId: messageThreadId ?? undefined,
+      silent: readBooleanParam(params, "silent"),
+    });
+
+    return jsonResult({
+      ok: true,
+      messageIds: result.messageIds,
       chatId: result.chatId,
     });
   }

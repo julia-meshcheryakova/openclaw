@@ -1736,3 +1736,189 @@ export async function createForumTopicTelegram(
     chatId: normalizedChatId,
   };
 }
+
+// ---------------------------------------------------------------------------
+// Media group (album) sending
+// ---------------------------------------------------------------------------
+
+type TelegramSendMediaGroupOpts = {
+  cfg?: ReturnType<typeof loadConfig>;
+  token?: string;
+  accountId?: string;
+  verbose?: boolean;
+  mediaLocalRoots?: readonly string[];
+  mediaReadFile?: (filePath: string) => Promise<Buffer>;
+  gatewayClientScopes?: readonly string[];
+  maxBytes?: number;
+  api?: TelegramApiOverride;
+  retry?: RetryConfig;
+  /** Send message silently (no notification). Defaults to false. */
+  silent?: boolean;
+  /** Message ID to reply to (for threading) */
+  replyToMessageId?: number;
+  /** Forum topic thread ID (for forum supergroups) */
+  messageThreadId?: number;
+  /** Inline keyboard buttons (reply markup). Must be sent as a follow-up message. */
+  buttons?: TelegramInlineButtons;
+};
+
+/**
+ * Send a media group (album) to a Telegram chat.
+ *
+ * Telegram API rules:
+ * - Caption only on first media item (≤1024 chars)
+ * - Max 10 items per album
+ * - sendMediaGroup doesn't support reply_markup — buttons must go on a follow-up message
+ *
+ * @param to - Chat ID or username
+ * @param filePaths - Array of file paths (1-10 items)
+ * @param caption - Optional caption (only on first media)
+ * @param opts - Optional configuration
+ */
+export async function sendMediaGroupTelegram(
+  to: string,
+  filePaths: string[],
+  caption?: string,
+  opts: TelegramSendMediaGroupOpts = {},
+): Promise<{ messageIds: string[]; chatId: string }> {
+  if (!Array.isArray(filePaths) || filePaths.length === 0) {
+    throw new Error("filePaths array is required and must contain at least 1 item");
+  }
+  if (filePaths.length > 10) {
+    throw new Error("Telegram media groups support max 10 items");
+  }
+
+  const { cfg, account, api } = resolveTelegramApiContext(opts);
+  const target = parseTelegramTarget(to);
+  const chatId = await resolveAndPersistChatId({
+    cfg,
+    api,
+    lookupTarget: target.chatId,
+    persistTarget: to,
+    verbose: opts.verbose,
+    gatewayClientScopes: opts.gatewayClientScopes,
+  });
+
+  const mediaMaxBytes =
+    opts.maxBytes ??
+    (typeof account.config.mediaMaxMb === "number" ? account.config.mediaMaxMb : 100) * 1024 * 1024;
+
+  const threadParams = buildTelegramThreadReplyParams({
+    targetMessageThreadId: target.messageThreadId,
+    messageThreadId: opts.messageThreadId,
+    chatType: target.chatType,
+    replyToMessageId: opts.replyToMessageId,
+  });
+
+  const requestWithDiag = createTelegramNonIdempotentRequestWithDiag({
+    cfg,
+    account,
+    retry: opts.retry,
+    verbose: opts.verbose,
+  });
+  const requestWithChatNotFound = createRequestWithChatNotFound({
+    requestWithDiag,
+    chatId,
+    input: to,
+  });
+
+  // Load all media files
+  const mediaItems = await Promise.all(
+    filePaths.map(async (filePath, index) => {
+      const media = await loadWebMedia(
+        filePath,
+        buildOutboundMediaLoadOptions({
+          maxBytes: mediaMaxBytes,
+          mediaLocalRoots: opts.mediaLocalRoots,
+          mediaReadFile: opts.mediaReadFile,
+          optimizeImages: false,
+        }),
+      );
+      const kind = kindFromMime(media.contentType ?? undefined);
+      const isGif = isGifMedia({
+        contentType: media.contentType,
+        fileName: media.fileName,
+      });
+
+      // Determine media type for this item
+      let type: "photo" | "video" | "document";
+      if (kind === "image" && !isGif) {
+        type = "photo";
+      } else if (kind === "video" && !isGif) {
+        type = "video";
+      } else {
+        type = "document";
+      }
+
+      const fileName =
+        media.fileName ?? (isGif ? "animation.gif" : inferFilename(kind ?? "document")) ?? "file";
+      const file = new InputFileCtor(media.buffer, fileName);
+
+      // Caption only on first item, truncated to 1024 chars (Telegram limit)
+      const itemCaption = index === 0 && caption ? caption.slice(0, 1024) : undefined;
+
+      return { type, media: file, caption: itemCaption };
+    }),
+  );
+
+  // Build sendMediaGroup payload
+  const mediaGroup = mediaItems.map((item) => ({
+    type: item.type,
+    media: item.media,
+    ...(item.caption ? { caption: item.caption, parse_mode: "HTML" as const } : {}),
+  }));
+
+  const mediaGroupParams = {
+    ...threadParams,
+    ...(opts.silent === true ? { disable_notification: true } : {}),
+  };
+
+  // Send the media group
+  const result = await withTelegramThreadFallback(
+    mediaGroupParams,
+    "mediaGroup",
+    opts.verbose,
+    async (effectiveParams, label) =>
+      requestWithChatNotFound(() => api.sendMediaGroup(chatId, mediaGroup, effectiveParams), label),
+  );
+
+  // Extract message IDs from the result (array of messages)
+  const messageIds: string[] = [];
+  const resolvedChatId = String(result?.[0]?.chat?.id ?? chatId);
+
+  if (Array.isArray(result)) {
+    for (const msg of result) {
+      if (msg?.message_id) {
+        const msgId = resolveTelegramMessageIdOrThrow(msg, "media group send");
+        recordSentMessage(chatId, msgId);
+        messageIds.push(String(msgId));
+      }
+    }
+  }
+
+  recordChannelActivity({
+    channel: "telegram",
+    accountId: account.accountId,
+    direction: "outbound",
+  });
+
+  // If buttons were provided, send them as a follow-up message
+  // (Telegram doesn't support reply_markup on sendMediaGroup)
+  if (opts.buttons && messageIds.length > 0) {
+    const replyMarkup = buildInlineKeyboard(opts.buttons);
+    if (replyMarkup) {
+      // Reply to the last message in the album
+      const lastMessageId = Number.parseInt(messageIds[messageIds.length - 1] ?? "0", 10);
+      if (lastMessageId > 0) {
+        const followUpText = ""; // Empty text, just buttons
+        await sendMessageTelegram(to, followUpText, {
+          ...opts,
+          replyToMessageId: lastMessageId,
+          buttons: opts.buttons,
+        });
+      }
+    }
+  }
+
+  return { messageIds, chatId: resolvedChatId };
+}

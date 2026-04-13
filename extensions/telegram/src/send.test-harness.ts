@@ -17,6 +17,7 @@ const { botApi, botCtorSpy } = vi.hoisted(() => ({
     pinChatMessage: vi.fn(),
     sendChatAction: vi.fn(),
     sendMessage: vi.fn(),
+    sendMediaGroup: vi.fn(),
     sendPoll: vi.fn(),
     sendPhoto: vi.fn(),
     sendVoice: vi.fn(),

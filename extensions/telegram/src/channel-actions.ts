@@ -20,7 +20,10 @@ import {
   resolveTelegramPollActionGateState,
 } from "./accounts.js";
 import { isTelegramInlineButtonsEnabled } from "./inline-buttons.js";
-import { createTelegramPollExtraToolSchemas } from "./message-tool-schema.js";
+import {
+  createTelegramMediaGroupExtraToolSchemas,
+  createTelegramPollExtraToolSchemas,
+} from "./message-tool-schema.js";
 
 let telegramActionRuntimePromise: Promise<typeof import("./action-runtime.js")> | null = null;
 
@@ -44,6 +47,7 @@ const TELEGRAM_MESSAGE_ACTION_MAP = {
   poll: "poll",
   react: "react",
   send: "sendMessage",
+  "send-media-group": "sendMediaGroup",
   sticker: "sendSticker",
   "sticker-search": "searchSticker",
   "topic-create": "createForumTopic",
@@ -123,6 +127,9 @@ function describeTelegramMessageTool({
     };
   }
   const actions = new Set<ChannelMessageActionName>(["send"]);
+  if (discovery.isEnabled("sendMediaGroup", true)) {
+    actions.add("send-media-group");
+  }
   if (discovery.pollEnabled) {
     actions.add("poll");
   }
@@ -156,6 +163,12 @@ function describeTelegramMessageTool({
   if (discovery.pollEnabled) {
     schema.push({
       properties: createTelegramPollExtraToolSchemas(),
+      visibility: "all-configured",
+    });
+  }
+  if (discovery.isEnabled("sendMediaGroup", true)) {
+    schema.push({
+      properties: createTelegramMediaGroupExtraToolSchemas(),
       visibility: "all-configured",
     });
   }

@@ -32,6 +32,7 @@ const {
   pinMessageTelegram,
   reactMessageTelegram,
   renameForumTopicTelegram,
+  sendMediaGroupTelegram,
   sendMessageTelegram,
   sendTypingTelegram,
   sendPollTelegram,
@@ -2429,4 +2430,59 @@ describe("createForumTopicTelegram", () => {
       expect(result).toEqual(testCase.expectedResult);
     });
   }
+});
+
+describe("sendMediaGroupTelegram", () => {
+  it("sends media group with multiple files", async () => {
+    const sendMediaGroup = vi.fn().mockResolvedValue([
+      { message_id: 101, chat: { id: 123 } },
+      { message_id: 102, chat: { id: 123 } },
+    ]);
+    const api = { sendMediaGroup } as unknown as Bot["api"];
+
+    // Mock loadWebMedia for two files
+    loadWebMedia.mockResolvedValueOnce({
+      buffer: Buffer.from("image1"),
+      contentType: "image/jpeg",
+      fileName: "photo1.jpg",
+    });
+    loadWebMedia.mockResolvedValueOnce({
+      buffer: Buffer.from("image2"),
+      contentType: "image/jpeg",
+      fileName: "photo2.jpg",
+    });
+
+    const result = await sendMediaGroupTelegram(
+      "123",
+      ["/path/to/image1.jpg", "/path/to/image2.jpg"],
+      "Album caption",
+      { token: "tok", api },
+    );
+
+    expect(sendMediaGroup).toHaveBeenCalledWith(
+      "123",
+      expect.arrayContaining([
+        expect.objectContaining({ type: "photo", caption: "Album caption" }),
+        expect.objectContaining({ type: "photo" }),
+      ]),
+      expect.anything(),
+    );
+    expect(result).toEqual({
+      messageIds: ["101", "102"],
+      chatId: "123",
+    });
+  });
+
+  it("rejects when filePaths array is empty", async () => {
+    await expect(sendMediaGroupTelegram("123", [], undefined, { token: "tok" })).rejects.toThrow(
+      "filePaths array is required and must contain at least 1 item",
+    );
+  });
+
+  it("rejects when filePaths array has more than 10 items", async () => {
+    const paths = Array.from({ length: 11 }, (_, i) => `/path/${i}.jpg`);
+    await expect(sendMediaGroupTelegram("123", paths, undefined, { token: "tok" })).rejects.toThrow(
+      "Telegram media groups support max 10 items",
+    );
+  });
 });
