@@ -1010,6 +1010,207 @@ export async function sendMessageTelegram(
   return textResult;
 }
 
+type TelegramMediaGroupOpts = {
+  cfg?: ReturnType<typeof loadConfig>;
+  token?: string;
+  accountId?: string;
+  verbose?: boolean;
+  caption?: string;
+  mediaLocalRoots?: readonly string[];
+  mediaReadFile?: (filePath: string) => Promise<Buffer>;
+  gatewayClientScopes?: readonly string[];
+  maxBytes?: number;
+  api?: TelegramApiOverride;
+  retry?: RetryConfig;
+  silent?: boolean;
+  replyToMessageId?: number;
+  quoteText?: string;
+  messageThreadId?: number;
+  forceDocument?: boolean;
+};
+
+/**
+ * Send a Telegram media group (album) with 1-10 media items.
+ * Caption is only allowed on the first item (max 1024 chars).
+ * reply_markup is not supported by sendMediaGroup - buttons must go on a follow-up message.
+ */
+export async function sendMediaGroupTelegram(
+  to: string,
+  filePaths: string[],
+  opts: TelegramMediaGroupOpts = {},
+): Promise<TelegramSendResult> {
+  if (!Array.isArray(filePaths) || filePaths.length < 1 || filePaths.length > 10) {
+    throw new Error("filePaths must be an array with 1-10 items for Telegram media groups");
+  }
+
+  const { cfg, account, api } = resolveTelegramApiContext(opts);
+  const target = parseTelegramTarget(to);
+  const chatId = await resolveAndPersistChatId({
+    cfg,
+    api,
+    lookupTarget: target.chatId,
+    persistTarget: to,
+    verbose: opts.verbose,
+    gatewayClientScopes: opts.gatewayClientScopes,
+  });
+
+  const mediaMaxBytes =
+    opts.maxBytes ??
+    (typeof account.config.mediaMaxMb === "number" ? account.config.mediaMaxMb : 100) * 1024 * 1024;
+
+  const threadParams = buildTelegramThreadReplyParams({
+    targetMessageThreadId: target.messageThreadId,
+    messageThreadId: opts.messageThreadId,
+    chatType: target.chatType,
+    replyToMessageId: opts.replyToMessageId,
+    quoteText: opts.quoteText,
+  });
+
+  const requestWithDiag = createTelegramNonIdempotentRequestWithDiag({
+    cfg,
+    account,
+    retry: opts.retry,
+    verbose: opts.verbose,
+  });
+
+  const requestWithChatNotFound = createRequestWithChatNotFound({
+    requestWithDiag,
+    chatId,
+    input: to,
+  });
+
+  // Load all media items
+  const mediaItems: Array<{
+    file: InstanceType<typeof InputFileCtor>;
+    kind: MediaKind | null;
+  }> = [];
+
+  for (const [index, filePath] of filePaths.entries()) {
+    const media = await loadWebMedia(
+      filePath,
+      buildOutboundMediaLoadOptions({
+        maxBytes: mediaMaxBytes,
+        mediaLocalRoots: opts.mediaLocalRoots,
+        mediaReadFile: opts.mediaReadFile,
+        optimizeImages: opts.forceDocument ? false : undefined,
+      }),
+    );
+
+    const kind = kindFromMime(media.contentType ?? undefined);
+    const isGif = isGifMedia({
+      contentType: media.contentType,
+      fileName: media.fileName,
+    });
+
+    const fileName =
+      media.fileName ?? (isGif ? `animation${index}.gif` : inferFilename(kind ?? "document")) ?? `file${index}`;
+    const file = new InputFileCtor(media.buffer, fileName);
+
+    mediaItems.push({ file, kind });
+  }
+
+  // Build media group array
+  // Caption only on first item (Telegram requirement)
+  const caption = opts.caption?.trim();
+  const hasCaption = caption && caption.length > 0 && caption.length <= 1024;
+
+  const textMode = "markdown"; // Always use markdown for captions
+  const tableMode = resolveMarkdownTableMode({
+    cfg,
+    channel: "telegram",
+    accountId: account.accountId,
+  });
+  const renderHtmlText = (value: string) => renderTelegramHtmlText(value, { textMode, tableMode });
+
+  const htmlCaption = hasCaption ? renderHtmlText(caption) : undefined;
+
+  type InputMediaPhoto = {
+    type: "photo";
+    media: InstanceType<typeof InputFileCtor>;
+    caption?: string;
+    parse_mode?: "HTML";
+  };
+
+  type InputMediaVideo = {
+    type: "video";
+    media: InstanceType<typeof InputFileCtor>;
+    caption?: string;
+    parse_mode?: "HTML";
+  };
+
+  type InputMediaDocument = {
+    type: "document";
+    media: InstanceType<typeof InputFileCtor>;
+    caption?: string;
+    parse_mode?: "HTML";
+  };
+
+  type InputMedia = InputMediaPhoto | InputMediaVideo | InputMediaDocument;
+
+  const media: InputMedia[] = mediaItems.map(({ file, kind }, index) => {
+    const baseItem = {
+      media: file,
+      ...(index === 0 && htmlCaption ? { caption: htmlCaption, parse_mode: "HTML" as const } : {}),
+    };
+
+    if (kind === "video") {
+      return { type: "video", ...baseItem };
+    }
+    if (kind === "image" && !opts.forceDocument) {
+      return { type: "photo", ...baseItem };
+    }
+    return { type: "document", ...baseItem };
+  });
+
+  const mediaGroupParams = {
+    ...threadParams,
+    ...(opts.silent === true ? { disable_notification: true } : {}),
+  };
+
+  const sendMediaGroup = async (params: typeof mediaGroupParams) => {
+    return await withTelegramThreadFallback(
+      params,
+      "mediaGroup",
+      opts.verbose,
+      async (effectiveParams, label) =>
+        requestWithChatNotFound(
+          () =>
+            api.sendMediaGroup(
+              chatId,
+              media as Parameters<TelegramApi["sendMediaGroup"]>[1],
+              effectiveParams as Parameters<TelegramApi["sendMediaGroup"]>[2],
+            ),
+          label,
+        ),
+    );
+  };
+
+  const result = await sendMediaGroup(mediaGroupParams);
+
+  // sendMediaGroup returns an array of messages
+  if (!Array.isArray(result) || result.length === 0) {
+    throw new Error("Telegram sendMediaGroup returned no messages");
+  }
+
+  // Record all sent messages
+  for (const msg of result) {
+    const messageId = resolveTelegramMessageIdOrThrow(msg, "media group send");
+    recordSentMessage(chatId, messageId);
+  }
+
+  const lastMessage = result[result.length - 1];
+  const lastMessageId = resolveTelegramMessageIdOrThrow(lastMessage, "media group send");
+  const resolvedChatId = String(lastMessage?.chat?.id ?? chatId);
+
+  recordChannelActivity({
+    channel: "telegram",
+    accountId: account.accountId,
+    direction: "outbound",
+  });
+
+  return { messageId: String(lastMessageId), chatId: resolvedChatId };
+}
+
 export async function sendTypingTelegram(
   to: string,
   opts: TelegramTypingOpts = {},

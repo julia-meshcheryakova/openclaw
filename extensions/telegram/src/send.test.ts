@@ -32,6 +32,7 @@ const {
   pinMessageTelegram,
   reactMessageTelegram,
   renameForumTopicTelegram,
+  sendMediaGroupTelegram,
   sendMessageTelegram,
   sendTypingTelegram,
   sendPollTelegram,
@@ -2429,4 +2430,87 @@ describe("createForumTopicTelegram", () => {
       expect(result).toEqual(testCase.expectedResult);
     });
   }
+});
+
+describe("sendMediaGroupTelegram", () => {
+  it("sends media group with multiple images", async () => {
+    const filePaths = ["https://example.com/image1.jpg", "https://example.com/image2.jpg"];
+
+    // Mock loadWebMedia for each file
+    loadWebMedia
+      .mockResolvedValueOnce({
+        buffer: Buffer.from("image1"),
+        contentType: "image/jpeg",
+        fileName: "image1.jpg",
+      })
+      .mockResolvedValueOnce({
+        buffer: Buffer.from("image2"),
+        contentType: "image/jpeg",
+        fileName: "image2.jpg",
+      });
+
+    botApi.sendMediaGroup.mockResolvedValue([
+      { message_id: 101, chat: { id: 123 } },
+      { message_id: 102, chat: { id: 123 } },
+    ]);
+
+    const result = await sendMediaGroupTelegram("123", filePaths, {
+      token: "tok",
+      caption: "Album caption",
+      api: botApi as unknown as Bot["api"],
+    });
+
+    expect(botApi.sendMediaGroup).toHaveBeenCalledTimes(1);
+    expect(result).toEqual({
+      messageId: "102",
+      chatId: "123",
+    });
+  });
+
+  it("validates filePaths array length", async () => {
+    await expect(
+      sendMediaGroupTelegram("123", [], {
+        token: "tok",
+        api: botApi as unknown as Bot["api"],
+      }),
+    ).rejects.toThrow("filePaths must be an array with 1-10 items");
+
+    await expect(
+      sendMediaGroupTelegram("123", Array(11).fill("path"), {
+        token: "tok",
+        api: botApi as unknown as Bot["api"],
+      }),
+    ).rejects.toThrow("filePaths must be an array with 1-10 items");
+  });
+
+  it("sends mixed media types (photo and video)", async () => {
+    const filePaths = ["https://example.com/photo.jpg", "https://example.com/video.mp4"];
+
+    loadWebMedia
+      .mockResolvedValueOnce({
+        buffer: Buffer.from("photo"),
+        contentType: "image/jpeg",
+        fileName: "photo.jpg",
+      })
+      .mockResolvedValueOnce({
+        buffer: Buffer.from("video"),
+        contentType: "video/mp4",
+        fileName: "video.mp4",
+      });
+
+    botApi.sendMediaGroup.mockResolvedValue([
+      { message_id: 201, chat: { id: 456 } },
+      { message_id: 202, chat: { id: 456 } },
+    ]);
+
+    const result = await sendMediaGroupTelegram("456", filePaths, {
+      token: "tok",
+      api: botApi as unknown as Bot["api"],
+    });
+
+    expect(botApi.sendMediaGroup).toHaveBeenCalledTimes(1);
+    const callArgs = botApi.sendMediaGroup.mock.calls[0];
+    expect(callArgs[1][0].type).toBe("photo");
+    expect(callArgs[1][1].type).toBe("video");
+  });
 });

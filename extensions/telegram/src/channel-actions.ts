@@ -44,6 +44,7 @@ const TELEGRAM_MESSAGE_ACTION_MAP = {
   poll: "poll",
   react: "react",
   send: "sendMessage",
+  "send-media-group": "sendMediaGroup",
   sticker: "sendSticker",
   "sticker-search": "searchSticker",
   "topic-create": "createForumTopic",
@@ -122,7 +123,7 @@ function describeTelegramMessageTool({
       schema: null,
     };
   }
-  const actions = new Set<ChannelMessageActionName>(["send"]);
+  const actions = new Set<ChannelMessageActionName>(["send", "send-media-group"]);
   if (discovery.pollEnabled) {
     actions.add("poll");
   }

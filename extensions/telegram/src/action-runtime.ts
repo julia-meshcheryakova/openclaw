@@ -34,6 +34,7 @@ import {
   editForumTopicTelegram,
   editMessageTelegram,
   reactMessageTelegram,
+  sendMediaGroupTelegram,
   sendMessageTelegram,
   sendPollTelegram,
   sendStickerTelegram,
@@ -49,6 +50,7 @@ export const telegramActionRuntime = {
   getCacheStats,
   reactMessageTelegram,
   searchStickers,
+  sendMediaGroupTelegram,
   sendMessageTelegram,
   sendPollTelegram,
   sendStickerTelegram,
@@ -69,6 +71,7 @@ const TELEGRAM_ACTION_ALIASES = {
   react: "react",
   searchSticker: "searchSticker",
   send: "sendMessage",
+  sendMediaGroup: "sendMediaGroup",
   sendMessage: "sendMessage",
   sendSticker: "sendSticker",
   sticker: "sendSticker",
@@ -363,6 +366,50 @@ export async function handleTelegramAction(
       messageThreadId: messageThreadId ?? undefined,
       quoteText: quoteText ?? undefined,
       asVoice: readBooleanParam(params, "asVoice"),
+      silent: readBooleanParam(params, "silent"),
+      forceDocument:
+        readBooleanParam(params, "forceDocument") ??
+        readBooleanParam(params, "asDocument") ??
+        false,
+    });
+    return jsonResult({
+      ok: true,
+      messageId: result.messageId,
+      chatId: result.chatId,
+    });
+  }
+
+  if (action === "sendMediaGroup") {
+    if (!isActionEnabled("sendMessage")) {
+      throw new Error("Telegram sendMessage is disabled.");
+    }
+    const to = readStringParam(params, "to", { required: true });
+    const filePaths = readStringArrayParam(params, "filePaths", { required: true });
+
+    if (!Array.isArray(filePaths) || filePaths.length < 1 || filePaths.length > 10) {
+      throw new Error("filePaths must be an array with 1-10 items for Telegram media groups");
+    }
+
+    const caption = readStringParam(params, "caption");
+    const replyToMessageId = readTelegramReplyToMessageId(params);
+    const messageThreadId = readTelegramThreadId(params);
+    const quoteText = readStringParam(params, "quoteText");
+    const token = resolveTelegramToken(cfg, { accountId }).token;
+    if (!token) {
+      throw new Error(
+        "Telegram bot token missing. Set TELEGRAM_BOT_TOKEN or channels.telegram.botToken.",
+      );
+    }
+    const result = await telegramActionRuntime.sendMediaGroupTelegram(to, filePaths, {
+      cfg,
+      token,
+      accountId: accountId ?? undefined,
+      caption: caption ?? undefined,
+      mediaLocalRoots: options?.mediaLocalRoots,
+      mediaReadFile: options?.mediaReadFile,
+      replyToMessageId: replyToMessageId ?? undefined,
+      messageThreadId: messageThreadId ?? undefined,
+      quoteText: quoteText ?? undefined,
       silent: readBooleanParam(params, "silent"),
       forceDocument:
         readBooleanParam(params, "forceDocument") ??
