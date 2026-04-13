@@ -10,6 +10,7 @@ export type MessageActionTargetMode = "to" | "channelId" | "none";
 export const MESSAGE_ACTION_TARGET_MODE: Record<ChannelMessageActionName, MessageActionTargetMode> =
   {
     send: "to",
+    "send-media-group": "to",
     broadcast: "none",
     poll: "to",
     "poll-vote": "to",

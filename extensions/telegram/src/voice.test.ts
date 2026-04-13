@@ -17,12 +17,30 @@ describe("splitTelegramCaption", () => {
     });
   });
 
-  it("moves oversized captions into follow-up text", () => {
+  it("moves oversized captions without sentence boundaries into follow-up text", () => {
     const text = "x".repeat(TELEGRAM_MAX_CAPTION_LENGTH + 1);
     expect(splitTelegramCaption(text)).toEqual({
       caption: undefined,
       followUpText: text,
     });
+  });
+
+  it("splits oversized captions at last sentence boundary", () => {
+    const firstSentence = "A".repeat(500) + ".";
+    const secondSentence = " " + "B".repeat(TELEGRAM_MAX_CAPTION_LENGTH);
+    const text = firstSentence + secondSentence;
+    const result = splitTelegramCaption(text);
+    expect(result.caption).toBe(firstSentence);
+    expect(result.followUpText).toBe(secondSentence.trim());
+  });
+
+  it("splits at sentence boundary ending with ! or ?", () => {
+    const first = "Hello world! ";
+    const overflow = "C".repeat(TELEGRAM_MAX_CAPTION_LENGTH);
+    const text = first + overflow;
+    const result = splitTelegramCaption(text);
+    expect(result.caption).toBe("Hello world!");
+    expect(result.followUpText).toBe(overflow);
   });
 });
 

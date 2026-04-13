@@ -110,6 +110,14 @@ function buildSendSchema(options: { includeInteractive: boolean }) {
     caption: Type.Optional(Type.String()),
     path: Type.Optional(Type.String()),
     filePath: Type.Optional(Type.String()),
+    filePaths: Type.Optional(
+      Type.Array(Type.String(), {
+        minItems: 1,
+        maxItems: 10,
+        description:
+          "Array of media URLs or local paths for Telegram media groups (albums). Min 1, max 10 items.",
+      }),
+    ),
     replyTo: Type.Optional(Type.String()),
     threadId: Type.Optional(Type.String()),
     asVoice: Type.Optional(Type.Boolean()),

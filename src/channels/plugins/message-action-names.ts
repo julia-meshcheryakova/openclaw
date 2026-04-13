@@ -1,5 +1,6 @@
 export const CHANNEL_MESSAGE_ACTION_NAMES = [
   "send",
+  "send-media-group",
   "broadcast",
   "poll",
   "poll-vote",
