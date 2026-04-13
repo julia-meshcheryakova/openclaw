@@ -2545,9 +2545,14 @@ describe("sendMediaGroupTelegram", () => {
     const firstItem = mediaArgs[1][0];
     expect(firstItem.caption).toBeDefined();
     expect(firstItem.caption!.length).toBeLessThanOrEqual(1024);
+    // Caption should contain the first sentence (rendered as HTML)
+    expect(firstItem.caption).toContain("A".repeat(500));
+    expect(firstItem.parse_mode).toBe("HTML");
 
     // Follow-up text message should have been sent with the overflow
     expect(botApi.sendMessage).toHaveBeenCalledTimes(1);
+    const followUpArgs = botApi.sendMessage.mock.calls[0];
+    expect(followUpArgs[1]).toContain("B".repeat(600));
 
     // Return value should be the follow-up message ID
     expect(result.messageId).toBe("302");

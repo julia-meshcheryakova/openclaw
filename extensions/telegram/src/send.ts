@@ -1082,6 +1082,7 @@ export async function sendMediaGroupTelegram(
   // Load all media items
   const mediaItems: Array<{
     file: InstanceType<typeof InputFileCtor>;
+    buffer: Buffer;
     kind: "image" | "audio" | "video" | "document" | null;
   }> = [];
 
@@ -1108,7 +1109,7 @@ export async function sendMediaGroupTelegram(
       `file${index}`;
     const file = new InputFileCtor(media.buffer, fileName);
 
-    mediaItems.push({ file, kind: kind ?? null });
+    mediaItems.push({ file, buffer: media.buffer, kind: kind ?? null });
   }
 
   // Build media group array
@@ -1150,7 +1151,9 @@ export async function sendMediaGroupTelegram(
 
   type InputMedia = InputMediaPhoto | InputMediaVideo | InputMediaDocument;
 
-  const isTelegramPhotoMetadataValid = (metadata: Awaited<ReturnType<typeof getImageMetadata>> | null | undefined) => {
+  const isTelegramPhotoMetadataValid = (
+    metadata: Awaited<ReturnType<typeof getImageMetadata>> | null | undefined,
+  ) => {
     const width = metadata?.width;
     const height = metadata?.height;
 
@@ -1170,17 +1173,19 @@ export async function sendMediaGroupTelegram(
   };
 
   const media: InputMedia[] = await Promise.all(
-    mediaItems.map(async ({ file, kind }, index) => {
+    mediaItems.map(async ({ file, buffer, kind }, index) => {
       const baseItem = {
         media: file,
-        ...(index === 0 && htmlCaption ? { caption: htmlCaption, parse_mode: "HTML" as const } : {}),
+        ...(index === 0 && htmlCaption
+          ? { caption: htmlCaption, parse_mode: "HTML" as const }
+          : {}),
       };
 
       if (kind === "video") {
         return { type: "video", ...baseItem };
       }
       if (kind === "image" && !opts.forceDocument) {
-        const metadata = await getImageMetadata(file);
+        const metadata = await getImageMetadata(buffer);
         if (isTelegramPhotoMetadataValid(metadata)) {
           return { type: "photo", ...baseItem };
         }
