@@ -2503,7 +2503,7 @@ describe("sendMediaGroupTelegram", () => {
       { message_id: 202, chat: { id: 456 } },
     ]);
 
-    const result = await sendMediaGroupTelegram("456", filePaths, {
+    await sendMediaGroupTelegram("456", filePaths, {
       token: "tok",
       api: botApi as unknown as Bot["api"],
     });
@@ -2512,5 +2512,45 @@ describe("sendMediaGroupTelegram", () => {
     const callArgs = botApi.sendMediaGroup.mock.calls[0];
     expect(callArgs[1][0].type).toBe("photo");
     expect(callArgs[1][1].type).toBe("video");
+  });
+
+  it("sends follow-up text message when caption exceeds 1024 chars", async () => {
+    const firstSentence = "A".repeat(500) + ".";
+    const overflow = " " + "B".repeat(600);
+    const longCaption = firstSentence + overflow;
+
+    const filePaths = ["https://example.com/photo.jpg"];
+
+    loadWebMedia.mockResolvedValueOnce({
+      buffer: Buffer.from("photo"),
+      contentType: "image/jpeg",
+      fileName: "photo.jpg",
+    });
+
+    botApi.sendMediaGroup.mockResolvedValue([{ message_id: 301, chat: { id: 789 } }]);
+    botApi.sendMessage.mockResolvedValue({
+      message_id: 302,
+      chat: { id: 789 },
+    });
+
+    const result = await sendMediaGroupTelegram("789", filePaths, {
+      token: "tok",
+      caption: longCaption,
+      api: botApi as unknown as Bot["api"],
+    });
+
+    // Media group should have been sent with the first sentence as caption
+    expect(botApi.sendMediaGroup).toHaveBeenCalledTimes(1);
+    const mediaArgs = botApi.sendMediaGroup.mock.calls[0];
+    const firstItem = mediaArgs[1][0];
+    expect(firstItem.caption).toBeDefined();
+    expect(firstItem.caption!.length).toBeLessThanOrEqual(1024);
+
+    // Follow-up text message should have been sent with the overflow
+    expect(botApi.sendMessage).toHaveBeenCalledTimes(1);
+
+    // Return value should be the follow-up message ID
+    expect(result.messageId).toBe("302");
+    expect(result.chatId).toBe("789");
   });
 });

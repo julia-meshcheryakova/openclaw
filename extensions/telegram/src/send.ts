@@ -1082,7 +1082,7 @@ export async function sendMediaGroupTelegram(
   // Load all media items
   const mediaItems: Array<{
     file: InstanceType<typeof InputFileCtor>;
-    kind: MediaKind | null;
+    kind: "image" | "audio" | "video" | "document" | null;
   }> = [];
 
   for (const [index, filePath] of filePaths.entries()) {
@@ -1103,16 +1103,19 @@ export async function sendMediaGroupTelegram(
     });
 
     const fileName =
-      media.fileName ?? (isGif ? `animation${index}.gif` : inferFilename(kind ?? "document")) ?? `file${index}`;
+      media.fileName ??
+      (isGif ? `animation${index}.gif` : inferFilename(kind ?? "document")) ??
+      `file${index}`;
     const file = new InputFileCtor(media.buffer, fileName);
 
-    mediaItems.push({ file, kind });
+    mediaItems.push({ file, kind: kind ?? null });
   }
 
   // Build media group array
-  // Caption only on first item (Telegram requirement)
-  const caption = opts.caption?.trim();
-  const hasCaption = caption && caption.length > 0 && caption.length <= 1024;
+  // Caption only on first item (Telegram requirement, max 1024 chars).
+  // If the caption exceeds 1024 chars, split at a sentence boundary and
+  // send the overflow as a follow-up text message.
+  const { caption, followUpText } = splitTelegramCaption(opts.caption);
 
   const textMode = "markdown"; // Always use markdown for captions
   const tableMode = resolveMarkdownTableMode({
@@ -1122,7 +1125,7 @@ export async function sendMediaGroupTelegram(
   });
   const renderHtmlText = (value: string) => renderTelegramHtmlText(value, { textMode, tableMode });
 
-  const htmlCaption = hasCaption ? renderHtmlText(caption) : undefined;
+  const htmlCaption = caption ? renderHtmlText(caption) : undefined;
 
   type InputMediaPhoto = {
     type: "photo";
@@ -1230,6 +1233,24 @@ export async function sendMediaGroupTelegram(
     accountId: account.accountId,
     direction: "outbound",
   });
+
+  // If the caption was split at a sentence boundary, send the overflow
+  // as a follow-up text message in the same thread/reply context.
+  if (followUpText) {
+    const followUpResult = await sendMessageTelegram(to, followUpText, {
+      cfg,
+      token: opts.token,
+      accountId: opts.accountId,
+      api: opts.api,
+      replyToMessageId: opts.replyToMessageId,
+      messageThreadId: opts.messageThreadId,
+      quoteText: undefined,
+      silent: opts.silent,
+      verbose: opts.verbose,
+      retry: opts.retry,
+    });
+    return { messageId: followUpResult.messageId, chatId: followUpResult.chatId };
+  }
 
   return { messageId: String(lastMessageId), chatId: resolvedChatId };
 }
